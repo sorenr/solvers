@@ -10,6 +10,9 @@ class Button:
 	def compute(self,input):
 		if self.label == '<<':
 			return int(input)/10
+		elif '=>' in self.label:
+			a,b = self.label.split('=>')
+			return int(str(input).replace(a,b))
 		elif self.label[0] in string.digits:
 			return int(str(input)+self.label)
 		elif self.label[0] == '+':
