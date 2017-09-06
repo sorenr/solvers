@@ -26,35 +26,44 @@ class Button:
 		else:
 			raise ValueError( 'Unknown button "%s"' % (iv) )
 
-def verify(seq,goal):
+# compute (and print) the solution
+def solution(seq,verbose=True):
 	c = int(seq[0])
 	for button in seq[1:]:
 		c1 = button.compute(c)
-		print c,str(button),'=',c1
+		if verbose:
+			print c,str(button),'=',c1
 		c = c1
-	print
-	assert(c == goal)
+	if verbose:
+		print
+	return c
 
-def solver(state,goal,buttons,maxdepth,path):
-	rv = []
-	if maxdepth<0:
-		return False
-	if state == goal:
-		verify(path,goal)
-	for button in buttons:
-		nxstate = button.compute(state)
-		# ignore non-ops
-		if nxstate != state:
-			solver(nxstate,goal,buttons,maxdepth-1,path+[button])
+# recursively try every combination of every available button
+def solver(state,buttons,path,args):
+	# print (and check) the solution if we've found it
+	if state == args.goal:
+		assert(solution(path,verbose=True) == args.goal)
+	# stop searching (and print the failure) if we're out of moves
+	elif len(path) > args.moves:
+		if args.verbose:
+			print map(str,path),'=',solution(path,verbose=False)
+	# recurse and try the next button(s)
+	else:
+		for button in buttons:
+			nxstate = button.compute(state)
+			# ignore non-ops
+			if nxstate != state:
+				solver(nxstate,buttons,path+[button],args)
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description='Solver for "Calculator: The Game" by Simple Machine.',
-		epilog="EXAMPLE: %s --init 0 --goal 21 --moves 5 --buttons +5 x3 x5 '<<'" % (sys.argv[1]))
+		epilog="EXAMPLE: %s --init 0 --goal 21 --moves 5 --buttons +5 x3 x5 '<<'" % (sys.argv[0]))
 	parser.add_argument('-i', '--init', dest='init', type=int, help='init val', required=True)
 	parser.add_argument('-g', '--goal', dest='goal', type=int, help='goal', required=True)
 	parser.add_argument('-m', '--moves', dest='moves', type=int, help='moves', required=True)
 	parser.add_argument('-b', '--buttons', dest='buttons', type=str, help='buttons', nargs='+', required=True)
+	parser.add_argument('-v', '--verbose', dest='verbose', action="store_true")
 
 	args = parser.parse_args()
 	buttons = map(Button,args.buttons)
-	solver(args.init,args.goal,buttons,args.moves,[str(args.init)])
+	solver(args.init,buttons,[str(args.init)],args)
