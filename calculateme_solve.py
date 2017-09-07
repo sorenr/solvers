@@ -10,6 +10,8 @@ class Button:
 	def compute(self,input):
 		if self.label == '<<':
 			return int(input)/10
+		elif self.label in ('+/-','-/+'):
+			return -1*int(input)
 		elif '=>' in self.label:
 			a,b = self.label.split('=>')
 			return int(str(input).replace(a,b))
@@ -22,17 +24,21 @@ class Button:
 		elif self.label[0] in 'x*':
 			return int(input)*int(self.label[1:])
 		elif self.label[0] == '/':
-			return int(input)/int(self.label[1:])
+			if int(input) % int(self.label[1:]) != 0:
+				return False
+			else:
+				return int(input)/int(self.label[1:])
 		else:
 			raise ValueError( 'Unknown button "%s"' % (iv) )
 
 # compute (and print) the solution
 def solution(seq,verbose=True):
 	c = int(seq[0])
+	print c,
 	for button in seq[1:]:
 		c1 = button.compute(c)
 		if verbose:
-			print c,str(button),'=',c1
+			print "[%s] %d" % (str(button),c1),
 		c = c1
 	if verbose:
 		print
@@ -46,13 +52,13 @@ def solver(state,buttons,path,args):
 	# stop searching (and print the failure) if we're out of moves
 	elif len(path) > args.moves:
 		if args.verbose:
-			print map(str,path),'=',solution(path,verbose=False)
+			solution(path,verbose=True)
 	# recurse and try the next button(s)
 	else:
 		for button in buttons:
 			nxstate = button.compute(state)
 			# ignore non-ops
-			if nxstate != state:
+			if nxstate != state and nxstate not in (False,None):
 				solver(nxstate,buttons,path+[button],args)
 
 if __name__ == "__main__":
