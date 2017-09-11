@@ -35,35 +35,25 @@ class Button:
 		else:
 			raise ValueError( 'Unknown button "%s"' % (iv) )
 
-# compute (and print) the solution
-def solution(seq,verbose=True):
-	c = int(seq[0])
-	print c,
-	for button in seq[1:]:
-		c1 = button.compute(c)
-		if verbose:
-			print "[%s] %d" % (str(button),c1),
-		c = c1
-	if verbose:
-		print
-	return c
+def printsol(state,path):
+	# print the initial state
+	print state[0],
+	for press,nxstate in zip(path,state[1:]):
+		print "[%s] %d" % (str(press),nxstate),
+	print "(%d)" % (len(path))
 
 # recursively try every combination of every available button
 def solver(state,buttons,path,args):
-	# print (and check) the solution if we've found it
-	if state == args.goal:
-		assert(solution(path,verbose=True) == args.goal)
-	# stop searching (and print the failure) if we're out of moves
-	elif len(path) > args.moves:
-		if args.verbose:
-			solution(path,verbose=True)
 	# recurse and try the next button(s)
-	else:
+	if len(path)<args.moves and state[-1] != args.goal:
 		for button in buttons:
-			nxstate = button.compute(state)
-			# ignore non-ops
-			if nxstate != state and nxstate not in (False,None):
-				solver(nxstate,buttons,path+[button],args)
+			nxstate = button.compute(state[-1])
+			# ignore non-ops and loops
+			if nxstate not in (False,None) and nxstate not in state:
+				solver(state+[nxstate],buttons,path+[str(button)],args)
+	# print the solution if we've found it
+	elif state[-1] == args.goal or args.verbose:
+		printsol(state,path)
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description='Solver for "Calculator: The Game" by Simple Machine.',
@@ -76,4 +66,4 @@ if __name__ == "__main__":
 
 	args = parser.parse_args()
 	buttons = map(Button,args.buttons)
-	solver(args.init,buttons,[str(args.init)],args)
+	solver([int(args.init)],buttons,[],args)
