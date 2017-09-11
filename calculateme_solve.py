@@ -15,6 +15,10 @@ class Button:
 		elif '=>' in self.label:
 			a,b = self.label.split('=>')
 			return int(str(input).replace(a,b))
+		elif self.label == 'reverse':
+			ainput = abs(int(input))
+			arev = str(ainput)[::-1]
+			return  int(arev) * (int(input)<0 and -1 or 1)
 		elif self.label[0] in string.digits:
 			return int(str(input)+self.label)
 		elif self.label[0] == '+':
