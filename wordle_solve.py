@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
 import numpy
+import multiprocessing
 import sys
+import platform
+import argparse
 
-WORDS = "/usr/share/dict/words"
+WORDS = "wordle_words.txt"
 WORD_LEN = 5
 
 
@@ -35,87 +38,9 @@ def get_words():
             if len(line) != WORD_LEN:
                 continue
             words.append(word_to_list(line))
-    return numpy.array(words)
-
-
-def make_guess(words):
-    guess = numpy.full(words.shape[1], 255)
-    # letters [a ... z]
-    letters = numpy.arange(26)
-    # positions [0 ... 4]
-    positions = numpy.arange(words.shape[1])
-
-    counts = []
-
-    # make counts for each letter...
-    for row in words.transpose():
-        # count letter frequency
-        count = numpy.bincount(row)
-        # pad the array to 26
-        count = numpy.pad(count, (0, 26 - count.shape[0]), mode='constant', constant_values=0)
-        counts.append(count)
-
-    counts = numpy.array(counts)
-    print("counts")
-    print(counts)
-    print()
-
-    while True:
-        print("#" * 80)
-        print()
-
-        # letter frequency in sorted order
-        counts_sort = numpy.argsort(counts)[:, ::-1]
-        print("counts_sort")
-        print(counts_sort)
-        print()
-
-        counts_sorted = counts_sort.copy()
-        for i, row in enumerate(counts_sort):
-            row_sorted = counts[i][row]
-            counts_sorted[i, :] = row_sorted
-        print("counts_sorted")
-        print(counts_sorted)
-        print()
-
-        # first column
-        first = counts_sorted[:, 0].transpose()
-        remainders = numpy.sum(counts_sorted[:, 1:], axis=1)
-        discriminant = numpy.abs(first - remainders)
-        print("discriminant")
-        print(discriminant)
-        print()
-
-        # find the most valuable position
-        discriminant_idx = numpy.argmin(discriminant)
-        guess_idx = positions[discriminant_idx]
-        letter_idx = counts_sort[discriminant_idx][0]
-        guess_letter = letters[letter_idx]
-        # pick the most valuable guess
-        guess[guess_idx] = guess_letter
-
-        if len(positions) <= 1:
-            return guess
-
-        counts = numpy.delete(counts, discriminant_idx, 0)
-        counts = numpy.delete(counts, letter_idx, 1)
-        print("counts")
-        print(counts)
-        print()
-
-        positions = numpy.delete(positions, discriminant_idx, 0)
-        print("positions")
-        print(positions)
-        print()
-
-        letters = numpy.delete(letters, letter_idx, 0)
-        print("letters")
-        print(letters)
-        print()
-
-        print("guess")
-        print(guess)
-        print()
+    rv = numpy.array(words)
+    print("Loaded {0} {1}-letter words".format(rv.shape[0], rv.shape[1]))
+    return rv
 
 
 def filter_correct(words, ci, pos):
@@ -142,7 +67,7 @@ def filter_incorrect(words, ci):
 
 def filter_words(words, guess, result):
     for i, result in enumerate(result.lower()):
-        ci = char_to_int(guess[i])
+        ci = guess[i]
         if result == 'g':
             words = filter_correct(words, ci, i)
         elif result == 'y':
@@ -152,17 +77,93 @@ def filter_words(words, guess, result):
         else:
             print("NOPE")
             sys.exit(-1)
+        if 0 == words.shape[0]:
+            return words
+    return words
 
 
-def wordle():
-    words = get_words()
+def gen_result(answer, guess):
+    rv = []
+    for ac, gc in zip(answer, guess):
+        if ac == gc:
+            rv.append('g')
+        elif gc in answer:
+            rv.append('y')
+        else:
+            rv.append('b')
+    return "".join(rv)
+
+
+class GuessFinder:
+    def __init__(self, guesses):
+        self.guesses = guesses  # available guesses (all valid words)
+
+    def guess_power(self, guess_i):
+        rv = 0
+        guess = self.guesses[guess_i]
+        for possibility_i in range(self.possibilities.shape[0]):
+            result = gen_result(self.possibilities[possibility_i], guess)
+            possibilities_other = numpy.delete(self.possibilities, possibility_i, 0)
+            possibilities_remain = filter_words(possibilities_other, guess, result)
+            rv += possibilities_remain.shape[0]
+        return (guess_i, rv)
+
+    def promote_guess(self, guess_i, result):
+        if self.min_rank is None or (result > 0 and self.min_rank > result):
+            self.min_guess_i = guess_i
+            self.min_rank = result
+            min_word = list_to_word(self.guesses[self.min_guess_i])
+            print("{} {} {:,}".format(self.possibilities.shape[0], min_word, self.min_rank))
+        else:
+            min_word = list_to_word(self.guesses[self.min_guess_i])
+            cur_word = list_to_word(self.guesses[guess_i])
+            print("{} {} {:,} < {} {:,}".format(self.possibilities.shape[0], min_word, self.min_rank, cur_word, result))
+
+    def best_guess(self, possibilities, threads=None):
+        """Pick the best guess (from self.guesses) given the possible words."""
+        self.possibilities = possibilities
+        self.min_guess_i = None
+        self.min_rank = None
+        # for each guess...
+        guesses_i_it = range(self.guesses.shape[0])
+        if threads == 1:
+            for guess_i in guesses_i_it:
+                guess_i, result = self.guess_power(guess_i)
+                self.promote_guess(guess_i, result)
+        else:
+            # Windows can't use more than 64 handles
+            if "Windows" == platform.system():
+                threads = min(61, threads)
+            print("Starting", threads, "threads.")
+            with multiprocessing.Pool(threads) as pool:
+                for p in pool.imap_unordered(self.guess_power, guesses_i_it):
+                    guess_i, result = p
+                    self.promote_guess(guess_i, result)
+        del self.possibilities
+        return self.guesses[self.min_guess_i]
+
+
+def wordle(threads=multiprocessing.cpu_count()):
+    possibilities = get_words()
+    assert(possibilities.shape[0])
+    guess_finder = GuessFinder(possibilities)
+    guess = word_to_list("lares")
     while True:
-        print(words.shape[0])
-        guess = make_guess(words)
-        print(guess)
-        result = input("{0} > ".format(list_to_word(guess)))
-        words = filter_words(words, guess, result)
+        print(list_to_word(guess))
+        result = input("> ")
+        possibilities = filter_words(possibilities, guess, result)
+        print(list_to_words(possibilities))
+        print(possibilities.shape[0], "possibilities")
+        if 1 == possibilities.shape[0]:
+            return list_to_word(possibilities[0])
+        input("press return to continue")
+        guess = guess_finder.best_guess(possibilities, threads=threads)
 
 
 if __name__ == "__main__":
-    wordle()
+    parser = argparse.ArgumentParser(description='Compute the next optimal Wordle guess.')
+    parser.add_argument('-t', dest='threads', type=int, nargs=1,
+                        metavar='THREADS', default=[multiprocessing.cpu_count()],
+                        help='threads')
+    args = parser.parse_args()
+    wordle(args.threads[0])
