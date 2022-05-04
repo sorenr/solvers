@@ -5,6 +5,7 @@ import multiprocessing
 import sys
 import platform
 import argparse
+import time
 
 WORDS = "wordle_words.txt"
 WORD_LEN = 5
@@ -110,19 +111,19 @@ class GuessFinder:
 
     def promote_guess(self, guess_i, result):
         if self.min_rank is None or (result > 0 and self.min_rank > result):
-            self.min_guess_i = guess_i
+            self.min_guesses_i = [guess_i]
             self.min_rank = result
-            min_word = list_to_word(self.guesses[self.min_guess_i])
-            print("{} {} {:,}".format(self.possibilities.shape[0], min_word, self.min_rank))
-        else:
-            min_word = list_to_word(self.guesses[self.min_guess_i])
-            cur_word = list_to_word(self.guesses[guess_i])
-            print("{} {} {:,} < {} {:,}".format(self.possibilities.shape[0], min_word, self.min_rank, cur_word, result))
+        elif self.min_rank == result:
+            self.min_guesses_i.append(guess_i)
+        min_words = [list_to_word(self.guesses[i]) for i in self.min_guesses_i]
+        min_words = " ".join(min_words)
+        cur_word = list_to_word(self.guesses[guess_i])
+        print("{} {} {:,} < {} {:,}".format(self.possibilities.shape[0], min_words, self.min_rank, cur_word, result))
 
     def best_guess(self, possibilities, threads=None):
         """Pick the best guess (from self.guesses) given the possible words."""
         self.possibilities = possibilities
-        self.min_guess_i = None
+        self.min_guesses_i = []
         self.min_rank = None
         # for each guess...
         guesses_i_it = range(self.guesses.shape[0])
@@ -140,7 +141,7 @@ class GuessFinder:
                     guess_i, result = p
                     self.promote_guess(guess_i, result)
         del self.possibilities
-        return self.guesses[self.min_guess_i]
+        return self.guesses[self.min_guesses_i[0]]
 
 
 def wordle(threads=multiprocessing.cpu_count(), first_principles=False):
@@ -161,7 +162,9 @@ def wordle(threads=multiprocessing.cpu_count(), first_principles=False):
         if 1 == possibilities.shape[0]:
             return list_to_word(possibilities[0])
         input("press return to continue")
+        t = time.time()
         guess = guess_finder.best_guess(possibilities, threads=threads)
+        print(time.time() - t, "seconds")
 
 
 if __name__ == "__main__":
