@@ -143,16 +143,20 @@ class GuessFinder:
         return self.guesses[self.min_guess_i]
 
 
-def wordle(threads=multiprocessing.cpu_count()):
+def wordle(threads=multiprocessing.cpu_count(), first_principles=False):
     possibilities = get_words()
     assert(possibilities.shape[0])
     guess_finder = GuessFinder(possibilities)
-    guess = word_to_list("lares")
+    if first_principles:
+        guess = None
+    else:
+        guess = word_to_list("lares")
     while True:
-        print(list_to_word(guess))
-        result = input("> ")
-        possibilities = filter_words(possibilities, guess, result)
-        print(list_to_words(possibilities))
+        if guess is not None:
+            print(list_to_word(guess))
+            result = input("> ")
+            possibilities = filter_words(possibilities, guess, result)
+            print(list_to_words(possibilities))
         print(possibilities.shape[0], "possibilities")
         if 1 == possibilities.shape[0]:
             return list_to_word(possibilities[0])
@@ -165,5 +169,7 @@ if __name__ == "__main__":
     parser.add_argument('-t', dest='threads', type=int, nargs=1,
                         metavar='THREADS', default=[multiprocessing.cpu_count()],
                         help='threads')
+    parser.add_argument('--first-principles', dest="first_principles",
+                        action="store_true", help="Recompute the first guess from scratch.")
     args = parser.parse_args()
-    wordle(args.threads[0])
+    wordle(args.threads[0], args.first_principles)
