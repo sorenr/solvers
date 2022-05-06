@@ -88,13 +88,13 @@ def filter_solutions(solutions, guess, clue):
     return solutions
 
 
-def gen_clue(answer, guess):
+def gen_clue(solution, guess):
     """Generate the clue for a given answer."""
     rv = []
-    for ac, gc in zip(answer, guess):
+    for ac, gc in zip(solution, guess):
         if ac == gc:
             rv.append('g')
-        elif gc in answer:
+        elif gc in solution:
             rv.append('y')
         else:
             rv.append('b')
@@ -124,8 +124,8 @@ class GuessFinder:
     def guesses(self):
         return lists_to_words(self._guesses)
 
-    def filter_solutions(self, guess, result):
-        self._solutions = filter_solutions(self._solutions, guess, result)
+    def filter_solutions(self, guess, clue):
+        self._solutions = filter_solutions(self._solutions, guess, clue)
         return self._solutions
 
     def filter_guesses(self, guess, clue):
@@ -197,7 +197,7 @@ class GuessFinder:
                     guess_i, result = p
                     self.min_guess(guess_i, result)
 
-        guesses = {tuple(x) for x in self._guesses}
+        guesses = {tuple(x) for x in self._guesses[self._min_guesses_i]}
         solutions = {tuple(x) for x in self._solutions}
         subset = list(sorted(solutions.intersection(guesses)))
         if subset:
@@ -207,9 +207,42 @@ class GuessFinder:
             guess = self._guesses[self._min_guesses_i[0]]
         return guess
 
+    def best_guess_solution(self, solution):
+        self._guesses = remove_word(self._guesses, solution)
+        min_power = None
+        min_guess = []
+        for guess in self._guesses:
+            clue = gen_clue(solution, guess)
+            power = filter_solutions(self._solutions, guess, clue).shape[0]
+            if min_power is None or power < min_power:
+                min_power = power
+                min_guess = [guess]
+            elif power == min_power:
+                min_guess.append(guess)
+
+        for guess in min_guess:
+            clue = gen_clue(solution, guess)
+            solutions = filter_solutions(self._solutions, guess, clue)
+            print(list_to_word(guess), lists_to_words(solutions))
+
+        guesses = lists_to_words(min_guess)
+
+        if False:
+            solutions = set(lists_to_words(self._solutions))
+            guesses = set(guesses)
+            guesses = list(sorted(guesses.intersection(solutions)))
+
+        print(", ".join(guesses))
+
+        sys.exit(0)
+
 
 def wordle(args):
     guess_finder = GuessFinder(args.guesses, args.solutions)
+
+    if args.solution:
+        solution = word_to_list(args.solution)
+        guess_finder.best_guess_solution(solution)
 
     if args.power:
         guess = word_to_list(args.power.strip())
@@ -231,6 +264,9 @@ def wordle(args):
             sys.stdout.write("{:,} solutions\n".format(guess_finder.num_solutions()))
             print(list_to_word(guess))
             clue = input("> ")
+            if ' ' in clue:
+                guess, clue = clue.split()
+                guess = word_to_list(guess)
             guess_finder.filter_solutions(guess, clue)
             guess_finder.remove_guess(guess)
             guess_finder.remove_solution(guess)
@@ -254,4 +290,5 @@ if __name__ == "__main__":
     parser.add_argument('--power', dest="power", help="Compute the expected power of this guess.")
     parser.add_argument('--guesses', dest="guesses", default=GUESSES, help="Valid guess list.")
     parser.add_argument('--solutions', dest="solutions", default=SOLUTIONS, help="Solution list.")
+    parser.add_argument('--solution', dest="solution", help="Provide the answer for insanely lucky guesses.")
     print("The word is", wordle(parser.parse_args()))
