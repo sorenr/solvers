@@ -28,7 +28,7 @@ def list_to_word(word):
     return "".join([int_to_char(i) for i in word])
 
 
-def list_to_words(words):
+def lists_to_words(words):
     return [list_to_word(word) for word in words]
 
 
@@ -67,14 +67,19 @@ def filter_incorrect(words, ci):
     return words[res]
 
 
-def filter_solutions(solutions, guess, result):
-    for i, result in enumerate(result.lower()):
+def remove_word(words, word):
+    sel = numpy.not_equal(words, word).any(axis=1)
+    return words[sel]
+
+
+def filter_solutions(solutions, guess, clue):
+    for i, clue_c in enumerate(clue.lower()):
         ci = guess[i]
-        if result == 'g':
+        if clue_c == 'g':
             solutions = filter_correct(solutions, ci, i)
-        elif result == 'y':
+        elif clue_c == 'y':
             solutions = filter_wrong_place(solutions, ci, i)
-        elif result == 'b':
+        elif clue_c == 'b':
             solutions = filter_incorrect(solutions, ci)
         else:
             assert(False)
@@ -114,11 +119,32 @@ class GuessFinder:
         return self._guesses.shape[0]
 
     def solutions(self):
-        return list_to_words(self._solutions)
+        return lists_to_words(self._solutions)
+
+    def guesses(self):
+        return lists_to_words(self._guesses)
 
     def filter_solutions(self, guess, result):
         self._solutions = filter_solutions(self._solutions, guess, result)
         return self._solutions
+
+    def filter_guesses(self, guess, clue):
+        for i, clue_c in enumerate(clue.lower()):
+            ci = guess[i]
+            if clue_c == 'g':
+                self._guesses = filter_correct(self._guesses, ci, i)
+            elif clue_c == 'y':
+                self._guesses = filter_wrong_place(self._guesses, ci, i)
+            if 0 == self._guesses.shape[0]:
+                break
+        print(lists_to_words(self._guesses))
+        print(self.num_guesses(), "guesses")
+
+    def remove_solution(self, word):
+        self._solutions = remove_word(self._solutions, word)
+
+    def remove_guess(self, word):
+        self._guesses = remove_word(self._guesses, word)
 
     def guess_power(self, guess):
         """Evaluate the 'power' of a specific guess. Smaller is better."""
@@ -134,17 +160,21 @@ class GuessFinder:
 
     def min_guess(self, guess_i, result):
         """Maintain a list of the minimum (best) guesses."""
+        p = False
         if self._min_rank is None or (result > 0 and self._min_rank > result):
             self._min_guesses_i = [guess_i]
             self._min_rank = result
+            p = True
         elif self._min_rank == result:
             self._min_guesses_i.append(guess_i)
+            p = True
         min_words = [list_to_word(self._guesses[i]) for i in self._min_guesses_i]
         min_words = " ".join(min_words)
         cur_word = list_to_word(self._guesses[guess_i])
         ns = self._solutions.shape[0]
-        print("{} {:0.1f} < {} {:0.1f}".format(min_words, self._min_rank / ns,
-                                               cur_word, result / ns))
+        if p:
+            print("{} {:0.1f} < {} {:0.1f}".format(min_words, self._min_rank / ns,
+                                                   cur_word, result / ns))
 
     def best_guess(self, threads: int):
         """Pick the best guess (from self._guesses) given the possible words."""
@@ -161,11 +191,21 @@ class GuessFinder:
             if "Windows" == platform.system():
                 threads = min(61, threads)
             print("Starting", threads, "threads.")
+            chunksize = int(self.num_guesses() / (2 * threads))
             with multiprocessing.Pool(threads) as pool:
-                for p in pool.imap_unordered(self.guess_power_i, guesses_i_it):
+                for p in pool.imap_unordered(self.guess_power_i, guesses_i_it, chunksize=chunksize):
                     guess_i, result = p
                     self.min_guess(guess_i, result)
-        return self._guesses[self._min_guesses_i[0]]
+
+        guesses = {tuple(x) for x in self._guesses}
+        solutions = {tuple(x) for x in self._solutions}
+        subset = list(sorted(solutions.intersection(guesses)))
+        if subset:
+            print("CLOSE", lists_to_words(subset))
+            guess = subset[0]
+        else:
+            guess = self._guesses[self._min_guesses_i[0]]
+        return guess
 
 
 def wordle(args):
@@ -186,14 +226,18 @@ def wordle(args):
 
     while True:
         if guess is not None:
+            if args.hard:
+                sys.stdout.write("{:,} guesses, ".format(guess_finder.num_guesses()))
+            sys.stdout.write("{:,} solutions\n".format(guess_finder.num_solutions()))
             print(list_to_word(guess))
             clue = input("> ")
             guess_finder.filter_solutions(guess, clue)
-            print(guess_finder.solutions())
+            guess_finder.remove_guess(guess)
+            guess_finder.remove_solution(guess)
+            if args.hard:
+                guess_finder.filter_guesses(guess, clue)
         if 1 == guess_finder.num_solutions():
             return guess_finder.solutions()[0]
-        print(guess_finder.num_solutions(), "solutions")
-        input("press return to continue")
         t = time.time()
         guess = guess_finder.best_guess(threads=args.threads[0])
         print(time.time() - t, "seconds")
@@ -206,7 +250,8 @@ if __name__ == "__main__":
                         help='threads')
     parser.add_argument('--first-principles', dest="first_principles",
                         action="store_true", help="Recompute the first guess from scratch.")
+    parser.add_argument('--hard', dest="hard", action="store_true", help="Hard mode.")
     parser.add_argument('--power', dest="power", help="Compute the expected power of this guess.")
     parser.add_argument('--guesses', dest="guesses", default=GUESSES, help="Valid guess list.")
     parser.add_argument('--solutions', dest="solutions", default=SOLUTIONS, help="Solution list.")
-    wordle(parser.parse_args())
+    print("The word is", wordle(parser.parse_args()))
