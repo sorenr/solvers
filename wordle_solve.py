@@ -10,6 +10,9 @@ import time
 GUESSES = "wordle_guesses.txt"
 SOLUTIONS = "wordle_solutions.txt"
 WORD_LEN = 5
+GREEN = ord('g') - ord('a')
+YELLOW = ord('y') - ord('a')
+BLACK = ord('b') - ord('a')
 
 
 def char_to_int(c):
@@ -22,6 +25,10 @@ def int_to_char(i):
 
 def word_to_list(word):
     return [char_to_int(c) for c in word.lower()]
+
+
+def words_to_lists(words):
+    return numpy.array([word_to_list(w) for w in words])
 
 
 def list_to_word(word):
@@ -45,60 +52,81 @@ def get_words(word_path):
     return rv
 
 
-def filter_correct(words, ci, pos):
-    column = words[:, pos]
-    res = numpy.equal(column, ci)
-    return words[res]
-
-
-def filter_wrong_place(words, ci, pos):
-    # the char is not in this column
-    column = words[:, pos]
-    sel = numpy.not_equal(column, ci)
-    words = words[sel]
-    # ...but it does appear in other columns
-    searchme = numpy.delete(words, pos, 1)
-    sel = numpy.any(numpy.equal(searchme, ci), axis=1)
-    return words[sel]
-
-
-def filter_incorrect(words, ci):
-    res = numpy.all(numpy.not_equal(words, ci), axis=1)
-    return words[res]
-
-
 def remove_word(words, word):
-    sel = numpy.not_equal(words, word).any(axis=1)
-    return words[sel]
+    return words[numpy.not_equal(words, word).any(axis=1)]
+
+
+def blank_g(words, clue):
+    clue = numpy.array(word_to_list(clue))
+    rv = words.copy()
+    rv[:, clue == GREEN] = -1
+    return rv
+
+
+def correct_sel(words, ci, pos):
+    column = words[:, pos]
+    sel = numpy.equal(column, ci)
+    return sel
+
+
+def wrong_place_sel(words, ci, pos):
+    words_in = numpy.isin(words, ci)
+    words_in_pos = numpy.invert(words_in[:, pos])
+    words_out_pos = numpy.delete(words_in, pos, axis=1).any(axis=1)
+    return numpy.logical_and(words_in_pos, words_out_pos).nonzero()[0]
+
+
+def incorrect_sel(words, ci, pos):
+    sel = numpy.isin(words, ci)
+    sel = sel.any(axis=1)
+    sel = numpy.invert(sel)
+    return sel
 
 
 def filter_solutions(solutions, guess, clue):
-    for i, clue_c in enumerate(clue.lower()):
-        ci = guess[i]
-        if clue_c == 'g':
-            solutions = filter_correct(solutions, ci, i)
-        elif clue_c == 'y':
-            solutions = filter_wrong_place(solutions, ci, i)
-        elif clue_c == 'b':
-            solutions = filter_incorrect(solutions, ci)
-        else:
-            assert(False)
-        if 0 == solutions.shape[0]:
-            break
+    sel_g = numpy.equal(clue, GREEN)
+    if sel_g.any():
+        words_is = numpy.equal(solutions, guess)
+        words_is_pos = words_is[:, sel_g].all(axis=1)
+        words_not_pos = words_is[:, numpy.invert(sel_g)].any(axis=1)
+        sel = numpy.logical_and(words_is_pos, numpy.invert(words_not_pos))
+        solutions = solutions[sel]
+        sel_gi = numpy.invert(sel_g)
+        solutions_t = solutions[:, sel_gi]
+        clue_t = clue[sel_gi]
+    else:
+        solutions_t = solutions
+        clue_t = clue
+
+    for i, ci in enumerate(clue_t):
+        if ci == YELLOW:
+            sel = wrong_place_sel(solutions_t, guess[i], i)
+        elif ci == BLACK:
+            sel = incorrect_sel(solutions_t, guess[i], i)
+        solutions = solutions[sel]
+        if solutions_t is not solutions:
+            solutions_t = solutions_t[sel]
+
     return solutions
 
 
 def gen_clue(solution, guess):
     """Generate the clue for a given answer."""
-    rv = []
-    for ac, gc in zip(solution, guess):
-        if ac == gc:
-            rv.append('g')
-        elif gc in solution:
-            rv.append('y')
+    rv = numpy.full(WORD_LEN, -1)
+    solution = list(solution)
+    non_g = []
+    for i in range(len(solution)):
+        if solution[i] == guess[i]:
+            rv[i] = GREEN
+            solution[i] = None
         else:
-            rv.append('b')
-    return "".join(rv)
+            non_g.append(i)
+    for i in non_g:
+        if guess[i] in solution:
+            rv[i] = YELLOW
+        else:
+            rv[i] = BLACK
+    return rv
 
 
 class GuessFinder:
@@ -131,10 +159,12 @@ class GuessFinder:
     def filter_guesses(self, guess, clue):
         for i, clue_c in enumerate(clue.lower()):
             ci = guess[i]
-            if clue_c == 'g':
-                self._guesses = filter_correct(self._guesses, ci, i)
-            elif clue_c == 'y':
-                self._guesses = filter_wrong_place(self._guesses, ci, i)
+            if clue_c == GREEN:
+                sel = correct_sel(self._guesses, ci, i)
+                self._guesses = self._guesses[sel]
+            elif clue_c == YELLOW:
+                sel = wrong_place_sel(self._guesses, ci, i)
+                self._guesses = self._guesses[sel]
             if 0 == self._guesses.shape[0]:
                 break
         print(lists_to_words(self._guesses))
@@ -142,9 +172,11 @@ class GuessFinder:
 
     def remove_solution(self, word):
         self._solutions = remove_word(self._solutions, word)
+        assert(self._solutions.shape[0])
 
     def remove_guess(self, word):
         self._guesses = remove_word(self._guesses, word)
+        assert(self._guesses.shape[0])
 
     def guess_power(self, guess):
         """Evaluate the 'power' of a specific guess. Smaller is better."""
@@ -160,24 +192,36 @@ class GuessFinder:
 
     def min_guess(self, guess_i, result):
         """Maintain a list of the minimum (best) guesses."""
-        p = False
+        last_words = None
+        last_rank = 0
         if self._min_rank is None or (result > 0 and self._min_rank > result):
+            tag = ""
+            if self._min_guesses_i:
+                last_words = lists_to_words(self._guesses[self._min_guesses_i])
+                last_words = " ".join(last_words)
+                last_rank = self._min_rank / self._solutions.shape[0]
             self._min_guesses_i = [guess_i]
             self._min_rank = result
-            p = True
         elif self._min_rank == result:
             self._min_guesses_i.append(guess_i)
-            p = True
-        min_words = [list_to_word(self._guesses[i]) for i in self._min_guesses_i]
-        min_words = " ".join(min_words)
-        cur_word = list_to_word(self._guesses[guess_i])
-        ns = self._solutions.shape[0]
-        if p:
-            print("{} {:0.1f} < {} {:0.1f}".format(min_words, self._min_rank / ns,
-                                                   cur_word, result / ns))
+            tag = "+"
+        else:
+            return  # leave without printing
+
+        this_word = self._guesses[self._min_guesses_i[-1]]
+        sol = numpy.equal(self._solutions, this_word).all(axis=1)
+        sol = sol.any() and "*" or ""
+        this_word = list_to_word(this_word)
+        this_rank = self._min_rank / self._solutions.shape[0]
+        if last_words:
+            print(f"{this_word}{sol} {this_rank:0.1f} <",
+                  f"{last_words} {last_rank:0.1f}")
+        else:
+            print(f"{this_word}{sol} {this_rank:0.1f}{tag}")
+        sys.stdout.flush()
 
     def best_guess(self, threads: int):
-        """Pick the best guess (from self._guesses) given the possible words."""
+        """Pick the best guess (from self._guesses) given the possible words"""
         self._min_guesses_i = []
         self._min_rank = None
         # for each guess...
@@ -191,9 +235,10 @@ class GuessFinder:
             if "Windows" == platform.system():
                 threads = min(61, threads)
             print("Starting", threads, "threads.")
-            chunksize = int(self.num_guesses() / (2 * threads))
+            chunksize = max(1, int(self.num_guesses() / (2 * threads)))
             with multiprocessing.Pool(threads) as pool:
-                for p in pool.imap_unordered(self.guess_power_i, guesses_i_it, chunksize=chunksize):
+                for p in pool.imap_unordered(self.guess_power_i, guesses_i_it,
+                                             chunksize=chunksize):
                     guess_i, result = p
                     self.min_guess(guess_i, result)
 
@@ -209,6 +254,7 @@ class GuessFinder:
 
     def best_guess_solution(self, solution):
         self._guesses = remove_word(self._guesses, solution)
+        assert(self._guesses[0])
         min_power = None
         min_guess = []
         for guess in self._guesses:
@@ -223,7 +269,7 @@ class GuessFinder:
         for guess in min_guess:
             clue = gen_clue(solution, guess)
             solutions = filter_solutions(self._solutions, guess, clue)
-            print(list_to_word(guess), lists_to_words(solutions))
+            assert(solutions.shape[0])
 
         guesses = lists_to_words(min_guess)
 
@@ -255,40 +301,58 @@ def wordle(args):
     if args.first_principles:
         guess = None
     else:
-        guess = word_to_list("roate")
+        guess = numpy.array(word_to_list("roate"))
 
     while True:
         if guess is not None:
             if args.hard:
-                sys.stdout.write("{:,} guesses, ".format(guess_finder.num_guesses()))
-            sys.stdout.write("{:,} solutions\n".format(guess_finder.num_solutions()))
+                guess_s = guess_finder.num_guesses()
+                sys.stdout.write(f"{guess_s:,} guesses\n")
+            sol_s = guess_finder.num_solutions()
+            sol_l = sol_s <= 10 and guess_finder.solutions() or ""
+            sys.stdout.write(f"{sol_s:,} solutions {sol_l}\n")
             print(list_to_word(guess))
             clue = input("> ")
             if ' ' in clue:
                 guess, clue = clue.split()
-                guess = word_to_list(guess)
+                guess = numpy.array(word_to_list(guess))
+            clue = numpy.array(word_to_list(clue))
             guess_finder.filter_solutions(guess, clue)
             guess_finder.remove_guess(guess)
             guess_finder.remove_solution(guess)
+            print(guess_finder.num_solutions(), "solutions")
+            print(" ".join(guess_finder.solutions()))
             if args.hard:
                 guess_finder.filter_guesses(guess, clue)
+                print(guess_finder.num_guesses(), "guesses")
         if 1 == guess_finder.num_solutions():
             return guess_finder.solutions()[0]
         t = time.time()
         guess = guess_finder.best_guess(threads=args.threads[0])
-        print(time.time() - t, "seconds")
+        t = time.time() - t
+        print(f"{t:0.2f} seconds")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Compute the next optimal Wordle guess.')
+    parser = argparse.ArgumentParser(
+        description='Compute the next optimal Wordle guess.')
     parser.add_argument('-t', dest='threads', type=int, nargs=1,
-                        metavar='THREADS', default=[multiprocessing.cpu_count()],
+                        metavar='THREADS',
+                        default=[multiprocessing.cpu_count()],
                         help='threads')
     parser.add_argument('--first-principles', dest="first_principles",
-                        action="store_true", help="Recompute the first guess from scratch.")
-    parser.add_argument('--hard', dest="hard", action="store_true", help="Hard mode.")
-    parser.add_argument('--power', dest="power", help="Compute the expected power of this guess.")
-    parser.add_argument('--guesses', dest="guesses", default=GUESSES, help="Valid guess list.")
-    parser.add_argument('--solutions', dest="solutions", default=SOLUTIONS, help="Solution list.")
-    parser.add_argument('--solution', dest="solution", help="Provide the answer for insanely lucky guesses.")
-    print("The word is", wordle(parser.parse_args()))
+                        action="store_true",
+                        help="Recompute the first guess from scratch.")
+    parser.add_argument('--hard', dest="hard", action="store_true",
+                        help="Hard mode.")
+    parser.add_argument('--power', dest="power",
+                        help="Compute the expected power of this guess.")
+    parser.add_argument('--guesses', dest="guesses", default=GUESSES,
+                        help="Valid guess list.")
+    parser.add_argument('--solutions', dest="solutions", default=SOLUTIONS,
+                        help="Solution list.")
+    parser.add_argument('--solution', dest="solution",
+                        help="Provide the answer for insanely lucky guesses.")
+
+    args = parser.parse_args()
+    print("The word is", wordle(args))
